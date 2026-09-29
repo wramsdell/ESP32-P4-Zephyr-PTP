@@ -1,0 +1,42 @@
+diff --git a/subsys/net/lib/ptp/clock.c b/subsys/net/lib/ptp/clock.c
+index 351010e7ea4..a31502a7dac 100644
+--- a/subsys/net/lib/ptp/clock.c
++++ b/subsys/net/lib/ptp/clock.c
+@@ -960,6 +960,15 @@ void ptp_clock_pollfd_invalidate(void)
+ 	}
+ }
+ 
++const struct zsock_pollfd *ptp_clock_diag_pollfds(size_t *count, bool *valid, int *work_busy)
++{
++	*count = 1 + PTP_SOCKET_CNT * ptp_clk.default_ds.n_ports;
++	*valid = ptp_clk.pollfd_valid;
++	*work_busy = k_work_busy_get(&ptp_clk.timeout_work);
++
++	return ptp_clk.pollfd;
++}
++
+ void ptp_clock_signal_timeout(void)
+ {
+ 	k_work_submit(&ptp_clk.timeout_work);
+diff --git a/subsys/net/lib/ptp/clock.h b/subsys/net/lib/ptp/clock.h
+index 3eee2639b64..4d2d7cb474f 100644
+--- a/subsys/net/lib/ptp/clock.h
++++ b/subsys/net/lib/ptp/clock.h
+@@ -236,6 +236,17 @@ void ptp_clock_pollfd_invalidate(void);
+  */
+ void ptp_clock_signal_timeout(void);
+ 
++/**
++ * @brief Debug-only view of the PTP thread's wakeup path.
++ *
++ * @param count Filled with the number of entries in the returned array.
++ * @param valid Filled with whether the socket entries have been populated.
++ * @param work_busy Filled with k_work_busy_get() of the timeout work item.
++ *
++ * @return The poll array: entry 0 is the timeout eventfd, the rest are sockets.
++ */
++const struct zsock_pollfd *ptp_clock_diag_pollfds(size_t *count, bool *valid, int *work_busy);
++
+ /**
+  * @brief Function signalling to the PTP Clock that STATE_DECISION_EVENT occurred and
+  * it needs to be handled.

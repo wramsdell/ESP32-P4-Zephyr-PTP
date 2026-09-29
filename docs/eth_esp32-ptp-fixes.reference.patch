@@ -1,0 +1,70 @@
+diff --git a/drivers/ethernet/eth_esp32.c b/drivers/ethernet/eth_esp32.c
+index a4e5d7f14c5..350385cd5d7 100644
+--- a/drivers/ethernet/eth_esp32.c
++++ b/drivers/ethernet/eth_esp32.c
+@@ -78,6 +78,7 @@ struct eth_esp32_dev_data {
+ 	const struct device *ptp_clock;
+ 	struct net_ptp_time rx_timestamp;
+ 	bool rx_timestamp_valid;
++	uint32_t ptp_nominal_addend;
+ #endif
+ 	struct k_sem int_sem;
+ 	struct k_sem tx_sem;
+@@ -891,9 +892,25 @@ static int eth_esp32_ptp_clock_adjust(const struct device *dev, int increment)
+ static int eth_esp32_ptp_clock_rate_adjust(const struct device *dev, double ratio)
+ {
+ 	struct eth_esp32_dev_data *const dev_data = dev->data;
+-	int32_t adj_ppb = (int32_t)((ratio - 1.0) * 1000000000.0);
++	double addend = (double)dev_data->ptp_nominal_addend * ratio;
+ 
+-	return emac_hal_ptp_adj_freq(&dev_data->hal, adj_ppb) == ESP_OK ? 0 : -EIO;
++	/*
++	 * The ratio is relative to the nominal frequency, so scale the addend
++	 * captured at init. emac_hal_ptp_adj_freq() scales the current addend
++	 * instead, which compounds every servo update.
++	 */
++	if (addend < 1.0 || addend > (double)UINT32_MAX) {
++		return -EINVAL;
++	}
++
++	if (!emac_ll_is_ts_addend_update_done(dev_data->hal.ptp_regs)) {
++		return -EBUSY;
++	}
++
++	emac_ll_set_ts_addend_val(dev_data->hal.ptp_regs, (uint32_t)addend);
++	emac_ll_ts_addend_do_update(dev_data->hal.ptp_regs);
++
++	return 0;
+ }
+ 
+ static DEVICE_API(ptp_clock, eth_esp32_ptp_clock_api) = {
+@@ -928,13 +945,28 @@ static int eth_esp32_ptp_clock_init(const struct device *dev)
+ 	ptp_config.upd_method = ETH_PTP_UPDATE_METHOD_FINE;
+ 	ptp_config.roll = ETH_PTP_DIGITAL_ROLLOVER;
+ 	ptp_config.ptp_clk_src_period_ns = 1000000000.0f / (float)ptp_clk_rate;
+-	ptp_config.ptp_req_accuracy_ns = ptp_config.ptp_clk_src_period_ns;
++	/*
++	 * Fine update adds the addend to a 32-bit accumulator every source
++	 * clock and bumps the time by the increment on overflow, so
++	 * addend = 2^32 * period / increment. An increment equal to the
++	 * period saturates the addend and leaves no room to speed the clock
++	 * up; twice the period puts it at 2^31, mid-range.
++	 */
++	ptp_config.ptp_req_accuracy_ns = 2.0f * ptp_config.ptp_clk_src_period_ns;
+ 
+ 	if (emac_hal_ptp_start(&dev_data->hal, &ptp_config) != ESP_OK) {
+ 		LOG_ERR("Failed to start PTP");
+ 		return -EIO;
+ 	}
+ 
++	/*
++	 * The MAC's PTP frame detection does not recognize PTP over UDP sent to
++	 * a unicast address (e.g. hybrid-mode Delay_Req), so timestamp every
++	 * received frame and let the stack pick the ones it needs.
++	 */
++	emac_ll_ts_all_enable(dev_data->hal.ptp_regs, true);
++
++	dev_data->ptp_nominal_addend = emac_ll_get_ts_addend_val(dev_data->hal.ptp_regs);
+ 	dev_data->ptp_clock = dev;
+ 
+ 	LOG_INF("PTP clock started, reference %u Hz", ptp_clk_rate);

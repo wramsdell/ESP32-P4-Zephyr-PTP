@@ -1,0 +1,9 @@
+/*
+ * IP101GRI needs a real reset pulse and settling time before MDIO access.
+ * Upstream board DTS leaves both at 0, so phy_mii probes a PHY that is
+ * still in reset and fails with "No PHY found at address 1".
+ */
+&phy {
+	reset-assert-duration-us = <10000>;
+	reset-deassertion-timeout-ms = <20>;
+};
