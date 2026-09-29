@@ -5,11 +5,18 @@
 # the default grandmaster (priority1 64); the rest use the Kconfig default.
 # The native dwc_mac Ethernet driver is the default; DRIVER=esp32 selects
 # the HAL-based eth_esp32.c instead (build/bN-esp32).
+# TREE=smp builds against the ~/zephyr-p4/smp worktrees (Zephyr + SMP PRs,
+# patched hal_espressif) with CONFIG_SMP=y into build/bN-smp.
 set -euo pipefail
 
 WS=${ZEPHYR_WS:-$HOME/zephyr-p4}
 source "$WS/.venv/bin/activate"
 export ZEPHYR_BASE="$WS/zephyr"
+tree_args=()
+if [ "${TREE:-}" = smp ]; then
+	export ZEPHYR_BASE="$WS/smp/zephyr"
+	tree_args=(-DZEPHYR_MODULES="$WS/smp/hal_espressif" -DEXTRA_CONF_FILE=smp.conf)
+fi
 export ZEPHYR_SDK_INSTALL_DIR=${ZEPHYR_SDK_INSTALL_DIR:-$HOME/zephyr-sdk-1.0.1}
 cd "$(dirname "$0")"
 
@@ -31,6 +38,8 @@ if [ "${DRIVER:-dwc}" = esp32 ]; then
 	extra_conf=(-DCONFIG_ETH_ESP32=y)
 fi
 
+[ "${TREE:-}" = smp ] && bdir="$bdir-smp"
+
 flash=0
 if [ "${1:-}" = flash ]; then
 	flash=1
@@ -38,7 +47,7 @@ if [ "${1:-}" = flash ]; then
 fi
 
 west build -b waveshare_esp32p4_eth/esp32p4/hpcore -d "$bdir" app "$@" -- \
-	"${extra_conf[@]}" \
+	"${extra_conf[@]}" "${tree_args[@]}" \
 	-DCONFIG_NET_CONFIG_MY_IPV4_ADDR=\"192.168.40.10$n\" \
 	-DCONFIG_PTP_PRIORITY1=$prio
 
