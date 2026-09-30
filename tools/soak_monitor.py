@@ -13,6 +13,7 @@ symbolizes the unwind against build/bN, and exits so the caller notices.
 It never touches DTR/RTS, which would reset the board.
 
 usage: soak_monitor.py [--hours H] [--interval S] [--out DIR] [--boards 1,2,3,4]
+                       [--build-suffix -smp]
 """
 import argparse
 import os
@@ -98,8 +99,8 @@ class Board:
         return port, lines
 
 
-def symbolize(n, lines):
-    elf = os.path.join(REPO, "build", f"b{n}", "zephyr", "zephyr.elf")
+def symbolize(n, lines, suffix=""):
+    elf = os.path.join(REPO, "build", f"b{n}{suffix}", "zephyr", "zephyr.elf")
     addrs = sorted(set(re.findall(r"0x4[0-9a-f]{7}", "\n".join(lines))))
     if not addrs or not os.path.exists(elf):
         return []
@@ -108,13 +109,13 @@ def symbolize(n, lines):
     return [f"{a}: {s}" for a, s in zip(addrs, res.stdout.splitlines())]
 
 
-def capture_stall(b, out, history):
+def capture_stall(b, out, history, suffix=""):
     report = [f"board {b.n} stall detected at {time.ctime()}",
               "last diag snapshots:"] + history
     for cmd in ([f"kernel thread unwind {b.tid}"] if b.tid else []) + [
             "ptp_diag", "net ptp port 1", "kernel thread list", "net iface"]:
         report += ["", f"$ {cmd}"] + b.command(cmd, 3.0)
-    report += ["", "symbolized addresses (build/b%d):" % b.n] + symbolize(b.n, report)
+    report += ["", f"symbolized addresses (build/b{b.n}{suffix}):"] + symbolize(b.n, report, suffix)
     path = os.path.join(out, f"stall_b{b.n}.txt")
     with open(path, "w") as f:
         f.write("\n".join(report) + "\n")
@@ -128,6 +129,8 @@ def main():
     ap.add_argument("--out", default=os.path.join(
         REPO, "soak", time.strftime("%Y%m%d-%H%M%S")))
     ap.add_argument("--boards", default="1,2,3,4")
+    ap.add_argument("--build-suffix", default="",
+                    help="build dir suffix for symbolizing, e.g. -smp for build/bN-smp")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
@@ -151,7 +154,7 @@ def main():
                 continue
             if prev[b.n] is not None and port["seq"] == prev[b.n]["seq"]:
                 if prev[b.n].get("stuck"):
-                    path = capture_stall(b, args.out, snaps[b.n])
+                    path = capture_stall(b, args.out, snaps[b.n], args.build_suffix)
                     summary.write(f"STALL b{b.n} captured -> {path}\n")
                     print(f"soak: STALL on board {b.n}, captured {path}", flush=True)
                     return 2
