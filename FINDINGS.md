@@ -198,6 +198,18 @@ own, if it has one), periodic IGMP re-reports from the boards (the
 `net_ipv4_igmp_resend_reports()` approach from the Pico project), or
 disabling snooping for this VLAN.
 
+**Fixed in the lab (2026-09-29 ~20:25).** The snooping was on the boards'
+TP-Link TL-SG108PE (MAC `b0:19:21:23:f7:85`), despite older notes saying it
+was disabled. It had also been failing DHCP and sitting on its factory
+default of 192.168.0.1, retrying DHCP every 5 s. After a factory reset
+(admin password unknown) it got a lease (192.168.1.126). IGMP Snooping is
+now disabled, and port 1 (Board 1) is mirrored to port 8. Verification:
+reset Board 3 alone and sample PTP passively every 30 s for 5 min.
+Throughout, B2 was the only grandmaster, all three slaves kept getting
+Delay_Resp (~3/s), and B3 resynced within 24 s. The host now sees PTP
+multicast without joining. The firmware-side IGMP re-report fix is still
+worth having for deployment networks with snooping and no querier.
+
 ## SMP (zephyr#120181), first run on Board 1
 
 `TREE=smp` build on v1.3 silicon: "Multicore bootloader", CPU1 up
