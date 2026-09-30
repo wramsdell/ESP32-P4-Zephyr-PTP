@@ -8,3 +8,4 @@ target_include_directories(app PRIVATE ${ZEPHYR_BASE}/subsys/net/lib)
 
 project(esp32p4_ptp)
 target_sources(app PRIVATE src/main.c src/ptp_diag.c)
+target_sources_ifdef(CONFIG_SMP app PRIVATE src/core1_test.c)
