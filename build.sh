@@ -5,6 +5,8 @@
 # the default grandmaster (priority1 64); the rest use the Kconfig default.
 # The native dwc_mac Ethernet driver is the default; DRIVER=esp32 selects
 # the HAL-based eth_esp32.c instead (build/bN-esp32).
+# PI_KP / PI_KI (thousandths, e.g. PI_KP=300 PI_KI=50) override the PTP
+# servo gains (CONFIG_PRECISION_TIMING_PI_KP/KI; prj.conf sets 300/50).
 set -euo pipefail
 
 WS=${ZEPHYR_WS:-$HOME/zephyr-p4}
@@ -31,6 +33,16 @@ if [ "${DRIVER:-dwc}" = esp32 ]; then
 	extra_conf=(-DCONFIG_ETH_ESP32=y)
 fi
 
+# Gain overrides get their own build dir: -D values stick in the CMake cache
+# and Zephyr doesn't reconfigure when they're removed, so sharing a dir would
+# leave a stale override in the normal build.
+gain_args=()
+if [ -n "${PI_KP:-}${PI_KI:-}" ]; then
+	bdir="$bdir-pi${PI_KP:-d}-${PI_KI:-d}"
+	[ -n "${PI_KP:-}" ] && gain_args+=(-DCONFIG_PRECISION_TIMING_PI_KP="$PI_KP")
+	[ -n "${PI_KI:-}" ] && gain_args+=(-DCONFIG_PRECISION_TIMING_PI_KI="$PI_KI")
+fi
+
 flash=0
 if [ "${1:-}" = flash ]; then
 	flash=1
@@ -38,7 +50,7 @@ if [ "${1:-}" = flash ]; then
 fi
 
 west build -b waveshare_esp32p4_eth/esp32p4/hpcore -d "$bdir" app "$@" -- \
-	"${extra_conf[@]}" \
+	"${extra_conf[@]}" "${gain_args[@]}" \
 	-DCONFIG_NET_CONFIG_MY_IPV4_ADDR=\"192.168.40.10$n\" \
 	-DCONFIG_PTP_PRIORITY1=$prio
 

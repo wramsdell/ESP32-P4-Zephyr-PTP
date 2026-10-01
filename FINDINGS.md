@@ -222,6 +222,77 @@ delay 11.275 µs ± 114 ns, 0 warnings. That's comparable to B1's single-core
 soak (202 ns, p99 500 ns), but too short to call a difference. Not yet tried:
 pinning a thread to CPU1, or a long soak under SMP.
 
+## 8-hour soak, all four boards on SMP (2026-09-29 21:21 – 09-30 05:21)
+
+All four boards on the `TREE=smp` build (dual core, plus the CPU1-pinned
+PPS-poll thread keeping CPU1 100 % busy), IGMP snooping off on the
+SG108PE, B2 GM. **No stall, 0 warnings/errors on all four boards.**
+
+| slave | stdev (excl. events) | p99 | p99.9 | events | single-core soak stdev |
+|---|---|---|---|---|---|
+| B1 | 179.0 ns | 450 ns | 575 ns | 3 | 201.7 ns |
+| B3 | 141.8 ns | 350 ns | 425 ns | 1 | 144.0 ns |
+| B4 | 187.1 ns | 500 ns | 625 ns | 2 | 194.6 ns |
+
+About 28.7k samples per slave. SMP is at least as good as single-core,
+and the ≥5 µs excursions were smaller (worst ~20 µs vs ~118 µs) and fewer.
+Only one of them (02:51:42, B4) has a µs-level match: B4's Delay_Req was
+1.4 µs behind a 345-byte DHCP broadcast. Two (22:52:03 B1+B3, 00:09:08 B4)
+had no large broadcast within 60 µs of any Sync/Delay_Req and no
+Delay_Req self-collision. They're unexplained; the capture can't see
+unicast frames queued ahead on a board's port.
+
+- **Delay_Req self-collisions:** 67 of 86,663 Delay_Reqs landed within
+  20 µs of another board's. Zephyr sends Delay_Req on a fixed 1 s timer,
+  whereas IEEE 1588 calls for a randomized interval. Boards reset together
+  start in phase and drift through each other.
+- **LAN broadcast load after the switch fix:** 82 large broadcasts/min,
+  now dominated by the Netgear (192.168.1.250) ↔ router DHCP churn
+  (~20k + 18k frames in 8 h). The SG108PE's 5 s DHCP retries are gone.
+- **CPU1 test thread (PPS-mirror feasibility):** on all four boards,
+  76 billion iterations over 8 h ran on CPU1 and none on CPU0. The loop
+  averaged 340 ns (min 330 ns) and saw every 1 Hz PPS edge. The **worst
+  single gap was 228–275 µs** per board, so as written (lowest priority,
+  preemptible) a mirrored PPS edge would occasionally land hundreds of µs
+  late. A usable mirror needs the loop made non-preemptible on CPU1.
+
+## PI gain tuning (2026-09-30, SMP build, B2 GM)
+
+The servo is `ppb = kp·e + Σ ki·e` once per Sync (1 s), with defaults
+kp 0.7 / ki 0.3 (`CONFIG_PRECISION_TIMING_PI_KP/KI` in thousandths; the same
+as ptp4l at a 1 s Sync interval). `tools/servo_sim.py` models the loop,
+including the raw (unfiltered) delay computed from the latest Sync. It
+reproduces B1's 12:29 ringing almost sample for sample (+59.5, −116.0,
++82.9, −56.9 … vs measured +59.5, −115.9, +81.6, −55.0). Most of the ringing
+comes from that delay coupling. A 10-sample delay median removes it even at
+the default gains; lower gains also damp it.
+
+Hardware comparison, run side by side (`PI_KP`/`PI_KI` in `build.sh`):
+B1 0.7/0.3 (control), B3 0.3/0.05, B4 0.1/0.01.
+
+- **Natural common-mode bad sample** (07:32:05, +5.4 µs on all three): B1
+  rang (−10.3, +7.1, −4.8, +3.6 … µs for ~9 s); B3 and B4 settled within 2
+  samples.
+- **GM phase steps** (`tools/gm_step_test.py`: `ptp_clock adj` ±20 µs on B2,
+  4 steps, 3 min apart):
+
+| slave | gains | after a GM step | <1 µs | <300 ns | steady stdev |
+|---|---|---|---|---|---|
+| B1 | 0.7/0.3 | rings, sign flips each sample | 10–12 s | 13–29 s | 124–224 ns |
+| B3 | 0.3/0.05 | smooth, ~3 µs integral overshoot | 19–20 s | 21–24 s | 81–96 ns |
+| B4 | 0.1/0.01 | slow exponential crawl | 43–44 s | 74–79 s | 75–87 ns |
+
+- B4 also took ~105 s to lock after reset (drifted to +31 µs first) vs ~31 s
+  for B3.
+- Some first post-step samples read ±30 µs instead of ±20: half the step
+  leaks into the delay estimate, the unfiltered-delay coupling again.
+
+**Recommendation for this network: kp 0.3 / ki 0.05.** It halves steady-state
+noise vs the default with no ringing, at the cost of slower large-step
+recovery (~20 s to <1 µs). 0.1/0.01 buys little more noise reduction and is
+4× slower; it would also track oscillator wander (untested here) slowly.
+Revisit the gains after adding a delay median.
+
 ## Unfiltered E2E path delay (soak observation)
 
 `ptp_clock_delay()` (`clock.c`) stores each new sample straight into
