@@ -290,6 +290,69 @@ recovery (~20 s to <1 µs). 0.1/0.01 buys little more noise reduction and is
 4× slower; it would also track oscillator wander (untested here) slowly.
 Revisit the gains after adding a delay median.
 
+## 8-hour soak with kp 0.3 / ki 0.05 (2026-09-30 19:49 – 10-01 03:49)
+
+SMP build on all four boards, new gains, B2 GM, IGMP snooping off; the
+host capture now runs on `enp4s0`. **No stall, 0 warnings/errors.**
+
+| slave | stdev excl. events | same, old gains (SMP soak) | p99 | p99.9 | samples >2 µs |
+|---|---|---|---|---|---|
+| B1 | 89.8 ns | 179.0 ns | 225 ns | 675 ns | 14 |
+| B3 | 98.3 ns | 141.8 ns | 225 ns | 600 ns | 11 |
+| B4 | 96.3 ns | 187.1 ns | 225 ns | 575 ns | 11 |
+
+About 28.7k samples per slave. Steady-state spread roughly halved, and p99
+went from 350–500 ns to 225 ns. Three ≥5 µs events per board, two of them
+hitting all slaves at once and both matched to a broadcast at the µs level:
+
+- **20:43:30:** the Sync crossed the switch 1.1 µs after a 1,351-byte mDNS
+  frame from the Netgear (`52:17:7d:96:e2:aa`; ~108 µs of wire time at
+  100 Mbit/s). All slaves read +65 µs, then −56…−59 µs (the delay-coupling
+  echo), then a monotone decay −6, −5, −3, −2, −1 µs, back to ~0 in ~8 s.
+  **No ringing**, where the old gains swung sign for 10+ s.
+- **22:40:52:** Sync 1.6 µs behind a 345-byte DHCP broadcast (Netgear).
+  +9 µs, −8 µs, then <1 µs within ~2 s.
+- The third event per board (B1 21:59:47 −12.8 µs; B3/B4 22:00:37
+  +15 µs) isn't correlated yet.
+
+The new gains damp excursions instead of ringing, but the echo after a bad
+sample (the second, opposite-sign sample) is still the unfiltered delay at
+work. The delay median is the next fix.
+
+## Grandmaster rotation soak (2026-10-01 22:07 – 10-02 06:07)
+
+`tools/gm_rotation_soak.py`: one process holds all consoles and switches the
+GM every 15 min with `ptp_prio` (new GM 32, others 128), rotating B1→B2→B3→
+B4. Every hour it resets all boards and then sets the new GM. SMP build,
+kp 0.3 / ki 0.05, snooping off. `tools/gm_rotation_analyze.py` counts a
+slave as synced at the first offset sample starting 10 consecutive samples
+under the threshold, measured from the new GM's state change (and from the
+old GM's demotion, for the old GM). **32/32 events recovered, 0
+warnings/errors.**
+
+| event | n | all boards < 1 µs | all boards < 300 ns |
+|---|---|---|---|
+| GM rotation | 24 | median 6.4 s (5.2–9.0) | median 6.9 s (5.2–10.9) |
+| reset all + new GM | 8 | median 70.8 s (61.1–73.4) | median 78.2 s (75.9–82.1) |
+
+- **Rotations are protocol-bound.** The new GM goes TIME TRANSMITTER 0.1–2.5 s
+  after `ptp_prio`. The old GM demotes to TIME RECEIVER after 4.1–6.6 s
+  (foreign-master qualification: two Announces at the 2 s interval), so the
+  old GM is always the last to resync. The other slaves barely move: peak
+  |offset| ≤ 0.8 µs, since all clocks already agreed.
+- **Resets are config-bound.**
+  - ~14 s to elect a GM: boot, then `CONFIG_PTP_ANNOUNCE_RECV_TIMEOUT=5`
+    Announce intervals (10 s) in LISTENING. The 5 comes from the upstream
+    sample; the spec default is 3.
+  - ~45–60 s of slewing: after a common reset the PHCs start 1.7–6.9 ms
+    apart, which is under the 10 ms pre-lock step threshold, so they're slewed
+    at the gentle gains. There were 0 clock steps in all 8 resets.
+- **Levers:** a pre-lock step threshold of tens of µs (like ptp4l's
+  `first_step_threshold`, 20 µs; a change to patch 0001) and
+  `ANNOUNCE_RECV_TIMEOUT=3` should bring reset recovery from ~70 s to an
+  estimated 10–15 s. Rotations can't get much faster without a shorter
+  Announce interval.
+
 ## Unfiltered E2E path delay (soak observation)
 
 `ptp_clock_delay()` (`clock.c`) stores each new sample straight into
