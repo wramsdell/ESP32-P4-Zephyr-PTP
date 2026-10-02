@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # usage: ./build.sh <board 1-4> [flash] [extra west build args...]
 #
-# Board N gets IPv4 192.168.40.10N and builds into build/bN.  Board 2 is
-# the default grandmaster (priority1 64); the rest use the Kconfig default.
+# Board N gets IPv4 192.168.40.10N and builds into build/bN.  Board $GM
+# (default 3) is the grandmaster (priority1 64); the rest use the Kconfig
+# default (128). Rebuild both the old and new GM when changing it.
 # The native dwc_mac Ethernet driver is the default; DRIVER=esp32 selects
 # the HAL-based eth_esp32.c instead (build/bN-esp32).
 # TREE=smp builds against the ~/zephyr-p4/smp worktrees (Zephyr + SMP PRs,
@@ -31,7 +32,7 @@ declare -A PORT=(
 	[4]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038724-if00
 )
 prio=128
-[ "$n" = 2 ] && prio=64
+[ "$n" = "${GM:-3}" ] && prio=64
 
 bdir="build/b$n"
 extra_conf=()
