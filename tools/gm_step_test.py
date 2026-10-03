@@ -6,7 +6,7 @@ Opens all four consoles (never touching DTR/RTS), logs each to
 `ptp_clock adj ptp-clock <ns>` to the GM. Step times go to <out>/steps.txt.
 
 usage: gm_step_test.py <out_dir> [--gm 2] [--step-ns 20000] [--cycles 2]
-                       [--hold 180]
+                       [--hold 180] [--boards 1,2,...]
 """
 import argparse
 import os
@@ -16,12 +16,7 @@ import time
 
 import serial
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094322-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094925-if00",
-    3: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094401-if00",
-    4: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038724-if00",
-}
+from boards import select
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 
 
@@ -48,12 +43,13 @@ def main():
     ap.add_argument("--step-ns", type=int, default=20000)
     ap.add_argument("--cycles", type=int, default=2)
     ap.add_argument("--hold", type=float, default=180.0)
+    ap.add_argument("--boards", default=None, help="comma list, default all")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
     stop = threading.Event()
     sers = {}
-    for n, port in PORTS.items():
+    for n, port in select(args.boards).items():
         sers[n] = serial.Serial(port, 115200, timeout=0.1)
         threading.Thread(target=reader, args=(sers[n], os.path.join(args.out, f"step{n}.log"),
                                                stop), daemon=True).start()

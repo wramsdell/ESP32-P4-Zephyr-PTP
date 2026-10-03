@@ -19,6 +19,7 @@ before the next event is reported as '-'.
 usage: gm_rotation_analyze.py <run_dir> [--run 10]
 """
 import argparse
+import glob
 import re
 import statistics
 
@@ -34,7 +35,8 @@ def load(run_dir):
         events.append((float(t), kind, int(gm.split("=")[1]),
                        None if prev == "None" else int(prev)))
     boards = {}
-    for n in (1, 2, 3, 4):
+    for n in sorted(int(re.search(r"b(\d+)\.log$", f)[1])
+                    for f in glob.glob(f"{run_dir}/b*.log")):
         offs, states, steps = [], [], []
         for line in open(f"{run_dir}/b{n}.log", errors="replace"):
             try:
@@ -92,7 +94,7 @@ def main():
         if kind == "rotate" and prev is not None:
             demote = first_state(boards[prev][1], t0, t_end, ("TIME RECEIVER",))
         per, s1, s3 = [], [], []
-        for n in (1, 2, 3, 4):
+        for n in sorted(boards):
             if n == gm:
                 continue
             offs, _, steps = boards[n]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Soak-test monitor for the four PoE-ETH boards.
+"""Soak-test monitor for the PoE-ETH boards (default: tools/boards.py PORTS).
 
 Keeps a reader on each board's console (full log to <out>/bN.log), sends
 `ptp_diag` every --interval seconds, and flags a board as stalled when its
@@ -12,7 +12,7 @@ On a stall it captures `kernel thread unwind <PTP tid>`, `ptp_diag`,
 symbolizes the unwind against build/bN, and exits so the caller notices.
 It never touches DTR/RTS, which would reset the board.
 
-usage: soak_monitor.py [--hours H] [--interval S] [--out DIR] [--boards 1,2,3,4]
+usage: soak_monitor.py [--hours H] [--interval S] [--out DIR] [--boards 1,2,...]
                        [--build-suffix -smp]
 """
 import argparse
@@ -25,12 +25,7 @@ import time
 
 import serial
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094322-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094925-if00",
-    3: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094401-if00",
-    4: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038724-if00",
-}
+from boards import PORTS
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ADDR2LINE = os.path.expanduser(
     "~/zephyr-sdk-1.0.1/gnu/riscv64-zephyr-elf/bin/riscv64-zephyr-elf-addr2line")
@@ -128,7 +123,7 @@ def main():
     ap.add_argument("--interval", type=float, default=60.0)
     ap.add_argument("--out", default=os.path.join(
         REPO, "soak", time.strftime("%Y%m%d-%H%M%S")))
-    ap.add_argument("--boards", default="1,2,3,4")
+    ap.add_argument("--boards", default=",".join(str(n) for n in sorted(PORTS)))
     ap.add_argument("--build-suffix", default="",
                     help="build dir suffix for symbolizing, e.g. -smp for build/bN-smp")
     args = ap.parse_args()
