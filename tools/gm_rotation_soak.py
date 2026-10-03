@@ -17,7 +17,10 @@ Reset is the same RTS pulse as serlog.py (DTR low, RTS high 100 ms).
 Nothing else touches DTR/RTS.
 
 usage: gm_rotation_soak.py <out> [--hours 8] [--period 900]
-                           [--reset-every 4] [--first-gm 1]
+                           [--reset-every 4] [--first-gm 1] [--boards 1,2,...]
+
+The GM rotates through --boards in order (default: all boards in
+tools/boards.py), starting at --first-gm.
 """
 import argparse
 import os
@@ -27,21 +30,16 @@ import time
 
 import serial
 
-PORTS = {
-    1: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094322-if00",
-    2: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094925-if00",
-    3: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094401-if00",
-    4: "/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038724-if00",
-}
+from boards import select
 ANSI = re.compile(rb"\x1b\[[0-9;]*[A-Za-z]")
 GM_PRIO = 32
 OTHER_PRIO = 128
 
 
 class Board:
-    def __init__(self, n, out):
+    def __init__(self, n, port, out):
         self.n = n
-        self.ser = serial.Serial(PORTS[n], 115200, timeout=0.1)
+        self.ser = serial.Serial(port, 115200, timeout=0.1)
         self.log = open(os.path.join(out, f"b{n}.log"), "a", buffering=1)
         self.lock = threading.Lock()
         threading.Thread(target=self.reader, daemon=True).start()
@@ -82,10 +80,12 @@ def main():
     ap.add_argument("--first-gm", type=int, default=1)
     ap.add_argument("--boot-wait", type=float, default=6.0)
     ap.add_argument("--diag-every", type=float, default=300.0)
+    ap.add_argument("--boards", default=None, help="comma list, default all")
     args = ap.parse_args()
 
     os.makedirs(args.out, exist_ok=True)
-    boards = {n: Board(n, args.out) for n in PORTS}
+    boards = {n: Board(n, port, args.out) for n, port in select(args.boards).items()}
+    order = sorted(boards)
     events = open(os.path.join(args.out, "events.txt"), "a", buffering=1)
 
     def set_gm(gm, prev):
@@ -110,7 +110,7 @@ def main():
             time.sleep(0.5)
 
         prev = gm
-        gm = (args.first_gm - 1 + k) % 4 + 1
+        gm = order[(order.index(args.first_gm) + k) % len(order)]
         is_reset = k % args.reset_every == 0
         if is_reset:
             for b in boards.values():

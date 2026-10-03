@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# usage: ./build.sh <board 1-4> [flash] [extra west build args...]
+# usage: ./build.sh <board 1-8> [flash] [extra west build args...]
 #
 # Board N gets IPv4 192.168.40.10N and builds into build/bN.  Board $GM
 # (default 3) is the grandmaster (priority1 64); the rest use the Kconfig
@@ -23,7 +23,13 @@ declare -A PORT=(
 	[2]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094925-if00
 	[3]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094401-if00
 	[4]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038724-if00
+	[5]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90038769-if00
+	[6]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90094190-if00
+	[7]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90157899-if00
+	[8]=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5B90158720-if00
 )
+# keep in sync with tools/boards.py
+[ -n "${PORT[$n]:-}" ] || { echo "unknown board $n (1-${#PORT[@]})" >&2; exit 1; }
 prio=128
 [ "$n" = "${GM:-3}" ] && prio=64
 
