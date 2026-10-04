@@ -19,6 +19,7 @@ before the next event is reported as '-'.
 usage: gm_rotation_analyze.py <run_dir> [--run 10]
 """
 import argparse
+import collections
 import glob
 import re
 import statistics
@@ -83,7 +84,7 @@ def main():
     args = ap.parse_args()
 
     events, boards = load(args.run_dir)
-    summary = {"reset": [], "rotate": []}
+    summary = collections.defaultdict(list)
     print(f"{'#':>2} {'time':8} {'kind':6} {'GM':>5} {'gm_up':>6} {'demote':>6} "
           f"{'all<1us':>7} {'all<300n':>8}  per-slave <1us / <300ns / peak us / steps")
     for i, (t0, kind, gm, prev) in enumerate(events):
