@@ -353,6 +353,122 @@ warnings/errors.**
   estimated 10–15 s. Rotations can't get much faster without a shorter
   Announce interval.
 
+## Resync soak, 7 boards (2026-10-03 13:54–15:54)
+
+`tools/resync_soak.py` on B1–B7 (B8 excluded): GM rotation every 15 min
+(15, 30 … 105) and a "knockout" every 15 min offset by 7.5 (7.5 … 112.5),
+which is `ptp_clock set ptp-clock 0` on every non-GM board, forcing a step,
+servo reset and re-acquisition. Per-measurement data:
+`time_error.csv` / `events.csv` (`tools/export_time_error.py`). No reboots.
+
+**Bug found: foreign-master records leak.** 5,845 × "Couldn't allocate memory
+for new foreign timeTransmitter". The pool is
+`CONFIG_PTP_FOREIGN_TIME_TRANSMITTER_RECORD_SIZE=5` records, and a record
+is only freed when the port is disabled (`ptp_port_free_foreign_tts()`);
+`foreign_clock_cleanup()` ages out a record's messages but never the record.
+So each board can only ever have known 5 distinct masters since boot. With 7
+boards rotating (plus transient tie-break GMs) every board exceeds that, can
+no longer record the real GM, and may declare itself GM. Observed: **B6 GM
+14:24–14:39 and B7 GM 15:09–15:39 alongside the designated GM**
+(split brain; ~2,200 "unrealistic delay" warnings from mixed Sync/Delay_Resp
+sources). The 4-board rotation soak never exceeded 3 foreign masters, so it
+didn't show. Mitigation: a larger record pool (config). Fix: free a foreign
+record once all its Announces have aged out of the window (unless it's the
+current best). Upstream candidate.
+
+Results from events outside the split-brain windows:
+
+| event | valid/total | all boards < 1 µs | all boards < 300 ns |
+|---|---|---|---|
+| knockout | 6/8 | median 18.7 s (18.1–23.2) | median 36.3 s (33.7–39.4) |
+| GM rotation | 5/7 | median 8.1 s (7.2–23.5) | median 14.7 s (11.7–40.7) |
+
+- Knockout: one step per slave as expected. Settling is servo-bound:
+  `clock_step()` resets the servo to the nominal rate, discarding the learned
+  frequency correction, so each board drifts at its crystal error (post-step
+  peak 5–25 µs, largest on B4 at ~18 µs every time) until the slow integral
+  (ki 0.05) re-learns it. Keeping the frequency estimate across a pure phase
+  step should cut this to a few seconds.
+- The `gm` column in time_error.csv is the *designated* GM; during the
+  split-brain windows some boards were following B6/B7 instead.
+
+## Resync soak #2, 7 boards, pools fixed (2026-10-03 16:38–18:38)
+
+Same schedule as resync #1, with `RECORD_SIZE=8` / `MSG_POLL_SIZE=40`, and
+no servo change (the baseline for a later run that keeps the frequency
+estimate across a step). Data: `soak/20261003-163853-resync2/`
+(`time_error.csv`, 86,011 rows; `events.csv`). **All 16 events recovered;
+no split brain** (every designated GM held its slot, 903–904 s); 0
+foreign-record or buffer allocation failures, 0 reboots. Rotations still
+show 2–4 s tie-break GM claims by other boards before the new GM's
+Announces arrive.
+
+| event | n | all boards < 1 µs | all boards < 300 ns |
+|---|---|---|---|
+| knockout | 8/8 | median 19.2 s (17.8–26.7) | median 35.1 s (31.3–39.4) |
+| GM rotation | 7/7 | median 6.6 s (5.2–7.7) | median 13.3 s (5.2–21.9) |
+
+Per-board knockout recovery (medians) tracks each board's post-step peak,
+i.e. its crystal error re-learned after `clock_step()` resets the servo:
+
+| board | < 1 µs | < 300 ns | post-step peak |
+|---|---|---|---|
+| B3 | 5.2 s | 18.6 s | 2.2 µs |
+| B1 | 15.8 s | 19.5 s | 4.3 µs |
+| B2 | 16.8 s | 31.3 s | 6.4 µs |
+| B6 | 18.5 s | 31.7 s | 10.8 µs |
+| B5 | 18.1 s | 34.8 s | 13.1 µs |
+| B7 | 18.3 s | 33.6 s | 13.2 µs |
+| B4 | 19.1 s | 34.0 s | 21.7 µs |
+
+## TP-Link vs Netgear switch (B1–B4 on the TL-SG108PE, B5–B7 on the GS308EP)
+
+From resync #1's quiet windows (90 s after each event to the next one,
+excluding the split-brain windows), with the GM rotating across both
+switches. MAD-based spread (outliers inflate stdev) and p99:
+
+| group | robust σ | p99 |
+|---|---|---|
+| TP-Link boards | 111 ns | 250 ns |
+| Netgear boards | 111 ns | 275 ns |
+| same switch as GM | 111 ns | 225 ns |
+| across the inter-switch link | 111 ns | 288 ns |
+
+- **No meaningful difference by switch.** Per board, robust σ is 102–111 ns
+  (coarse: offsets are quantized to 25 ns) and p99 is 225–288 ns.
+- What matters slightly is hop count to the current GM: paired within the
+  same window, cross-switch boards were +25 ns noisier on average (0 to
+  +56 ns over 10 windows).
+- The extra hop adds a constant +2.35 µs of path delay (11.25 → 13.6 µs).
+  E2E corrects it as long as the delay is the same in both directions; a
+  constant asymmetry would be invisible to these self-measured offsets
+  (needs external PPS measurement).
+
+## PTP thread self-deadlock on the message pool (root cause of the B4 stall)
+
+Raising only `CONFIG_PTP_FOREIGN_TIME_TRANSMITTER_RECORD_SIZE` to 16 and
+resetting all 7 boards together froze the PTP thread on 6 of them within a
+minute. Board 3, caught live: the thread pended on `msg_slab`, a wakeup
+pending but unconsumed, both sockets readable, timeouts expired
+(`timeouts=0x5`), only 3 Syncs/1 Announce sent. Symbolized backtrace:
+`ptp_thread → ptp_port_event_gen (port.c:1857) → ptp_msg_alloc (msg.c:226)`.
+"net_pkt: Data buffer allocation failed" followed, since the undrained sockets
+held every RX buffer.
+
+`ptp_msg_alloc()` does `k_mem_slab_alloc(&msg_slab, …, K_FOREVER)` on the
+PTP thread, the only consumer that frees messages, so an empty pool
+deadlocks it permanently. The pool is `CONFIG_PTP_MSG_POLL_SIZE=10`
+messages (1,576 bytes each), and each foreign-master record keeps up to ~3
+Announces from it. With 5 records it just fit. This matches the first-night
+B4 stall exactly (thread pended indefinitely, timers expired and
+unprocessed, unconsumed wakeup). **Upstream candidate:** allocate with
+`K_NO_WAIT` and drop the message, rather than block the thread that frees
+them.
+
+Config used now: `RECORD_SIZE=8` (6 other boards + a host ptp4l + spare),
+`MSG_POLL_SIZE=40` (8×3 + ~10 in flight + headroom); RAM 44 % → 58 %.
+A simultaneous reset of all 7 boards then came up clean.
+
 ## Unfiltered E2E path delay (soak observation)
 
 `ptp_clock_delay()` (`clock.c`) stores each new sample straight into
