@@ -1,0 +1,56 @@
+diff --git a/subsys/net/lib/ptp/port.c b/subsys/net/lib/ptp/port.c
+index d4a8bf64eb6..17a1428ff43 100644
+--- a/subsys/net/lib/ptp/port.c
++++ b/subsys/net/lib/ptp/port.c
+@@ -1877,6 +1877,11 @@ enum ptp_port_event ptp_port_event_gen(struct ptp_port *port, int idx)
+ 		return PTP_EVT_NONE;
+ 	}
+ 
++	if (ptp_fault_rx(port, msg)) {
++		ptp_msg_unref(msg);
++		return PTP_EVT_NONE;
++	}
++
+ 	switch (ptp_msg_type(msg)) {
+ 	case PTP_MSG_SYNC:
+ 		port_sync_msg_process(port, msg);
+@@ -2233,6 +2238,14 @@ void ptp_port_free_foreign_tts(struct ptp_port *port)
+ 	}
+ }
+ 
++__weak bool ptp_fault_rx(struct ptp_port *port, struct ptp_msg *msg)
++{
++	ARG_UNUSED(port);
++	ARG_UNUSED(msg);
++
++	return false;
++}
++
+ int ptp_port_update_current_time_transmitter(struct ptp_port *port, struct ptp_msg *msg)
+ {
+ 	struct ptp_foreign_tt_clock *foreign = port->best;
+diff --git a/subsys/net/lib/ptp/port.h b/subsys/net/lib/ptp/port.h
+index 65cac016aa6..dc6bf0a095f 100644
+--- a/subsys/net/lib/ptp/port.h
++++ b/subsys/net/lib/ptp/port.h
+@@ -169,6 +169,20 @@ enum ptp_port_event ptp_port_timer_event_gen(struct ptp_port *port, struct k_tim
+  */
+ enum ptp_port_event ptp_port_event_gen(struct ptp_port *port, int idx);
+ 
++/**
++ * @brief Debug-only fault-injection hook for received PTP messages.
++ *
++ * Called for every received message after it is parsed (timestamps in host
++ * format) and before it is processed. The default does nothing; an
++ * application may override it to adjust @p msg's timestamps or to drop it.
++ *
++ * @param[in] port PTP Port the message arrived on.
++ * @param[in,out] msg Received message.
++ *
++ * @return true to drop the message, false to process it.
++ */
++bool ptp_fault_rx(struct ptp_port *port, struct ptp_msg *msg);
++
+ /**
+  * @brief Function handling PTP Port event.
+  *
