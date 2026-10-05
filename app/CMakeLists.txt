@@ -7,5 +7,5 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 target_include_directories(app PRIVATE ${ZEPHYR_BASE}/subsys/net/lib)
 
 project(esp32p4_ptp)
-target_sources(app PRIVATE src/main.c src/ptp_diag.c src/ptp_prio.c)
+target_sources(app PRIVATE src/main.c src/ptp_diag.c src/ptp_prio.c src/ptp_fault.c)
 target_sources_ifdef(CONFIG_SMP app PRIVATE src/core1_test.c)
