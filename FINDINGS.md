@@ -444,6 +444,37 @@ switches. MAD-based spread (outliers inflate stdev) and p99:
   constant asymmetry would be invisible to these self-measured offsets
   (needs external PPS measurement).
 
+## Delay_Resp loss across a GM change: silent holdover (2026-10-04)
+
+`tools/dresp_path_test.py`: all Delay_Resp dropped on B1 (TP-Link) and
+B5 (Netgear) with `ptp_fault drop dresp 100`, then the GM moved B3→B6
+(across the inter-switch link) and later B6→B3; controls B2/B4/B7
+unfaulted. Data: `soak/20261004-200918-dresp/`.
+
+- **Prediction was wrong.** I expected the faulted boards to keep their old
+  path delay and servo silently to a time ~2.35 µs off. Instead they
+  **stopped producing offsets altogether**: 2 samples in the 120 s after
+  each GM change, vs 120 on the controls.
+- **Mechanism:** at each rotation the faulted boards (like most boards)
+  made a 2–3 s tie-break GM claim. `clock_update_grandmaster()` clears
+  `current_ds`, including `mean_delay`, and the stack computes no offset
+  while `mean_delay == 0` (`clock.c:800`). Normally the next Delay_Resp
+  restores it within ~1 s; with responses lost it never comes back.
+- **It's silent:** 0 warnings, and the port reported TIME_RECEIVER the
+  whole time, while the clock was actually free-running in holdover. A
+  status check would call the board synchronized.
+- **Holdover drift once responses resumed:** first offsets +4.55 µs (B1) /
+  +4.22 µs (B5) after cycle 1, −1.25 / −1.32 µs after cycle 2 (~120 s each,
+  i.e. ~10–40 ppb), then normal recovery in ~5 s. The error was
+  common-mode on both faulted boards despite opposite path changes, so it
+  was holdover drift, not the 2.35 µs path difference.
+- **Implications:** (1) every tie-break GM claim at a rotation costs that
+  board one delay round-trip before it corrects again; this is part of the
+  measured rotation settling. (2) A board that loses Delay_Resp (filtering,
+  a misbehaving GM, an asymmetric network fault) after any GM change
+  silently stops syncing. Worth a warning or a sync-status flag (e.g. "no
+  delay sample for N s") in the stack or app.
+
 ## PTP thread self-deadlock on the message pool (root cause of the B4 stall)
 
 Raising only `CONFIG_PTP_FOREIGN_TIME_TRANSMITTER_RECORD_SIZE` to 16 and
